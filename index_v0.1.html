@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Multi View HLS App</title>
+  <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: #000;
+      height: 100%;
+      overflow: hidden;
+      font-family: sans-serif;
+    }
+
+    #sidebar {
+      position: fixed;
+      right: 0;
+      top: 0;
+      width: 60px;
+      height: 100%;
+      background: #111;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding-top: 20px;
+      z-index: 100;
+    }
+
+    .icon-button {
+      width: 40px;
+      height: 40px;
+      margin: 10px 0;
+      background: #333;
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 20px;
+    }
+
+    .icon-button:hover {
+      background: #555;
+    }
+
+    .page {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: calc(100vw - 60px);
+      height: 100vh;
+      display: none;
+      z-index: 1;
+      background: #000;
+      color: white;
+    }
+
+    .page.active {
+      display: block;
+    }
+
+    #controls {
+      padding: 10px;
+      text-align: center;
+      z-index: 10;
+    }
+
+    button {
+      background: #333;
+      color: white;
+      border: none;
+      padding: 8px 12px;
+      margin: 0 4px;
+      border-radius: 5px;
+      cursor: pointer;
+    }
+
+    button:hover {
+      background: #555;
+    }
+
+    .grid-container {
+      display: grid;
+      width: 100%;
+      height: calc(100vh - 50px);
+    }
+
+    video {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      background: #000;
+    }
+
+    .fullscreen-video {
+      position: fixed !important;
+      top: 0;
+      left: 0;
+      width: 100vw !important;
+      height: 100vh !important;
+      z-index: 9999;
+    }
+
+    .hidden-video {
+      display: none !important;
+    }
+
+    .error-overlay {
+      position: absolute;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: #000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    .error-overlay span {
+      font-size: 36px;
+      color: #f80;
+      opacity: 0.6;
+    }
+  </style>
+</head>
+<body>
+  <div id="sidebar">
+    <div class="icon-button" onclick="showPage('home')">🏠</div>
+    <div class="icon-button" onclick="showPage('settings')">⚙️</div>
+    <div class="icon-button" onclick="showPage('network')">🌐</div>
+    <div class="icon-button" onclick="showPage('record')">⏺️</div>
+  </div>
+
+  <!-- Home Page -->
+  <section id="home" class="page active">
+    <div id="controls">
+      <button onclick="loadGroup(0)">Kênh 1–4</button>
+      <button onclick="loadGroup(1)">Kênh 5–8</button>
+      <button onclick="loadGroup(2)">Kênh 9–12</button>
+      <button onclick="loadGroup(3)">Kênh 13–16</button>
+      <button onclick="loadGroup('all')">Xem tất cả</button>
+    </div>
+    <div id="grid" class="grid-container"></div>
+  </section>
+
+  <!-- Settings Page -->
+  <section id="settings" class="page">
+    <h2 style="text-align:center; padding-top: 20px;">Settings Page (Tạm thời trống)</h2>
+  </section>
+
+  <!-- Network Page -->
+  <section id="network" class="page">
+    <h2 style="text-align:center; padding-top: 20px;">Network Page (Tạm thời trống)</h2>
+  </section>
+
+  <!-- Record Page -->
+  <section id="record" class="page">
+    <h2 style="text-align:center; padding-top: 20px;">Record Page (Tạm thời trống)</h2>
+  </section>
+
+  <script>
+    const baseUrl = window.location.origin;
+    const m3u8List = [
+      "channel0_index.m3u8", "channel1_index.m3u8", "channel2_index.m3u8", "channel3_index.m3u8",
+      "channel4_index.m3u8", "channel5_index.m3u8", "channel6_index.m3u8", "channel7_index.m3u8",
+      "channel8_index.m3u8", "channel9_index.m3u8", "channel10_index.m3u8", "channel11_index.m3u8",
+      "channel12_index.m3u8", "channel13_index.m3u8", "channel14_index.m3u8", "channel15_index.m3u8"
+    ];
+
+    const grid = document.getElementById('grid');
+    const videoPool = {}; // Giữ lại các Hls instance và video theo tên file
+
+    function loadGroup(groupIndex) {
+      const visibleFiles = groupIndex === 'all' ? m3u8List : m3u8List.slice(groupIndex * 4, groupIndex * 4 + 4);
+
+      grid.innerHTML = '';
+      const layout = groupIndex === 'all' ? 4 : 2;
+      grid.style.gridTemplateColumns = `repeat(${layout}, 1fr)`;
+      grid.style.gridTemplateRows = `repeat(${layout}, 1fr)`;
+
+      for (const file of m3u8List) {
+        if (videoPool[file] && videoPool[file].wrapper) {
+          videoPool[file].wrapper.classList.add('hidden-video');
+        }
+      }
+
+      visibleFiles.forEach((file, idx) => {
+        let video, hls, wrapper;
+
+        if (videoPool[file]) {
+          wrapper = videoPool[file].wrapper;
+          wrapper.classList.remove('hidden-video');
+        } else {
+          wrapper = document.createElement('div');
+          wrapper.style.position = 'relative';
+          wrapper.style.width = '100%';
+          wrapper.style.height = '100%';
+
+          video = document.createElement('video');
+          video.autoplay = true;
+          video.muted = true;
+          video.controls = false;
+          video.playsInline = true;
+          video.id = `video_${file}`;
+
+          video.addEventListener('click', () => showPage('home'));
+          video.addEventListener('dblclick', () => {
+            if (video.classList.contains('fullscreen-video')) {
+              video.classList.remove('fullscreen-video');
+            } else {
+              document.querySelectorAll('video').forEach(v => v.classList.remove('fullscreen-video'));
+              video.classList.add('fullscreen-video');
+            }
+          });
+
+          const overlay = document.createElement('div');
+          overlay.className = 'error-overlay';
+          overlay.style.display = 'none';
+          const icon = document.createElement('span');
+          icon.innerText = '⚠';
+          overlay.appendChild(icon);
+          wrapper.appendChild(video);
+          wrapper.appendChild(overlay);
+
+          const url = `${baseUrl}/${file}`;
+          if (Hls.isSupported()) {
+            hls = new Hls();
+            hls.loadSource(url);
+            hls.attachMedia(video);
+            hls.on(Hls.Events.ERROR, (event, data) => {
+              if (data.fatal) {
+                overlay.style.display = 'flex';
+                console.warn(`Yêu cầu backend reload: ${file}`);
+                // TODO: Gửi yêu cầu về backend để reload kênh file
+              }
+            });
+          } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = url;
+          }
+
+          videoPool[file] = { wrapper, video, hls };
+        }
+
+        grid.appendChild(videoPool[file].wrapper);
+      });
+    }
+
+    function showPage(pageId) {
+      document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+      document.getElementById(pageId).classList.add('active');
+    }
+
+    loadGroup(0);
+  </script>
+</body>
+</html>
